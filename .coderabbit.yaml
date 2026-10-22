@@ -1,0 +1,221 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for STM32CubeF4.
+#
+# Priorities driving this configuration:
+#   1. Defect prevention: firmware bugs that reach silicon/production cannot be
+#      fixed with a simple patch, so correctness issues must block merges.
+#   2. Supply-chain safety: external contributors are the highest-risk source of
+#      change, so malicious or unreviewable content must be caught before merge.
+
+language: en-US
+tone_instructions: >-
+  Be precise and terse. Prioritize correctness, memory safety, and security over
+  style. Explain the concrete embedded/hardware impact of each issue.
+
+reviews:
+  profile: assertive
+  # Lets "error" pre-merge checks block the PR until they pass.
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+  sequence_diagrams: false
+  poem: false
+  in_progress_fortune: false
+  assess_linked_issues: true
+  related_prs: true
+  suggested_labels: true
+  suggested_reviewers: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    base_branches:
+      - master
+      - main
+
+  # Skip generated, vendor-IDE, and binary content that cannot be reviewed as text.
+  # Supply-chain risk in these files is still covered by the pre-merge checks,
+  # which look at the full list of changed files.
+  path_filters:
+    - "!**/*.html"
+    - "!**/*.css"
+    - "!**/_htmresc/**"
+    - "!Documentation/**"
+    - "!**/*.png"
+    - "!**/*.bmp"
+    - "!**/*.gif"
+    - "!**/*.jpg"
+    - "!**/*.uvoptx"
+    - "!**/*.ewd"
+    - "!sbom_cdx.json"
+
+  path_instructions:
+    - path: "Drivers/**"
+      instructions: >-
+        Drivers (HAL/LL, CMSIS, BSP) are git submodules. A change here normally
+        shows up as a submodule pointer bump. Confirm that the new commit comes
+        from the official STMicroelectronics repository and that the bump matches
+        the release notes. Flag any in-tree edits to submodule content.
+    - path: "Middlewares/Third_Party/**"
+      instructions: >-
+        Third-party middleware (FreeRTOS, LwIP, mbedTLS, FatFs, LibJPEG). Changes
+        must track an identifiable upstream release or a documented ST patch.
+        Flag security-relevant regressions (crypto configuration, TLS settings,
+        buffer handling in network/file stacks) and any license header changes.
+    - path: "Middlewares/ST/**"
+      instructions: >-
+        ST middleware (USB Device/Host, Audio, STemWin, TouchGFX). Check
+        descriptor and packet length handling, endpoint buffer bounds, and
+        state-machine transitions on disconnect or error. USB input comes from
+        the host and is untrusted.
+    - path: "Projects/**/*.{c,h}"
+      instructions: >-
+        Example and application code that customers copy into products. It must
+        be correct and robust: check HAL return values, use timeouts, avoid
+        magic register values, and configure clocks and IRQs correctly for the
+        target board.
+    - path: "**/*.{s,S}"
+      instructions: >-
+        Startup and assembly files. Any change to the vector table, the reset
+        handler, stack/heap setup, or the data/bss initialization is
+        high-criticality. Verify it against the device reference manual and the
+        linker script.
+    - path: "**/*.{ld,icf,sct}"
+      instructions: >-
+        Linker scripts. Verify that memory region origins and lengths match the
+        device datasheet, that sections are not moved into executable or
+        writable regions unexpectedly, and that no hidden sections or KEEP()
+        entries pull in unexpected code.
+    - path: ".github/**"
+      instructions: >-
+        CI/workflow and repository automation. Treat every change as
+        security-sensitive: check for new secrets usage, pull_request_target
+        misuse, unpinned third-party actions, and widened permissions.
+
+  tools:
+    cppcheck:
+      enabled: true
+    clang:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    semgrep:
+      enabled: true
+    osvScanner:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+
+  # Seven checks in total: 2 built-in + 5 custom. The other built-ins are off.
+  pre_merge_checks:
+    # PR authors (including external contributors) cannot dismiss failing checks;
+    # only requested reviewers / maintainers can.
+    override_requested_reviewers_only: true
+
+    docstrings:
+      mode: "off"
+    title:
+      mode: "off"
+
+    # 1
+    description:
+      mode: error
+    # 2
+    issue_assessment:
+      mode: warning
+
+    custom_checks:
+      # 3
+      - name: "Supply-chain and malicious code safety"
+        mode: error
+        instructions: |
+          Fail if ANY of the following is true for the changed files:
+          - New or modified prebuilt binaries or opaque blobs (.a, .lib, .o, .obj, .elf, .axf, .hex, .bin, .dfu, .exe, .dll, .so, .jar, .zip) without an explicit justification in the PR description stating their source and how to rebuild them.
+          - Obfuscated or encoded payloads: long base64/hex string literals or byte arrays that are not documented data tables (fonts, images, crypto test vectors), or code that decodes and then executes or writes data to flash.
+          - New hardcoded credentials, private keys, certificates, tokens, or passwords.
+          - Changes to .gitmodules URLs, or submodule pointers that move to a commit not on an official STMicroelectronics repository.
+          - New network endpoints, IP addresses, or domain names in firmware or scripts, or new download steps (curl/wget/pip/npm) in build or CI scripts.
+          - Changes under .github/ that widen workflow permissions, add pull_request_target, or use third-party actions that are not pinned to a full commit SHA.
+          - Hidden behavior: code that is unreachable in normal flow but can be activated by a magic value, debug backdoor, undocumented command, or a disabled security check (e.g. readout protection, MPU, TrustZone, signature or CRC verification).
+          - Removed or altered copyright/license headers, or added code under a license that is incompatible with the repository (e.g. GPL code copied into BSD-3-Clause/Apache-2.0 files).
+          Pass only if none of the above apply.
+
+      # 4
+      - name: "Memory safety and undefined behavior"
+        mode: error
+        instructions: |
+          For all changed C/C++ code, fail if any of the following is introduced:
+          - Buffer accesses (arrays, memcpy/memset/strcpy/sprintf, DMA buffers) whose index or length is not bounded by the destination size, especially lengths taken from external input (UART, USB, SPI, I2C, CAN, Ethernet, SD card, files).
+          - Pointer dereferences that can be NULL without a check, especially on HAL handle and callback pointers.
+          - Integer overflow/underflow or signed/unsigned conversion in length, size, or offset computations; shifts by the type width or more.
+          - Reads of uninitialized variables or structure fields.
+          - Use of unbounded string functions (strcpy, strcat, sprintf, gets) where a bounded variant exists.
+          - Dynamic allocation (malloc/free/new) in HAL/LL driver code or ISR context.
+          - Hardware registers, or variables shared with ISRs/DMA, accessed without the volatile qualifier.
+          - Recursion or unbounded stack allocation (large local arrays, VLAs) in driver or ISR code.
+          Follow MISRA C:2012 mandatory and required rules as the reference. Pass only if none of the above are found.
+
+      # 5
+      - name: "Interrupt, concurrency and real-time safety"
+        mode: error
+        instructions: |
+          For changed code that runs in, or shares data with, interrupt handlers, DMA callbacks, or RTOS tasks, fail if:
+          - An ISR or HAL callback (e.g. *_IRQHandler, HAL_*_Callback) calls blocking functions: HAL_Delay, busy-wait loops without a timeout, printf or other blocking I/O, or non-ISR-safe FreeRTOS APIs (any API that has a *FromISR variant).
+          - Data shared between ISR and thread context is read-modify-written without a critical section, atomic access, or disabled interrupts.
+          - Interrupt priorities are changed in a way that conflicts with configMAX_SYSCALL_INTERRUPT_PRIORITY when FreeRTOS APIs are called from those ISRs.
+          - Interrupts are disabled (__disable_irq, taskENTER_CRITICAL) without being restored on every return path, including error paths.
+          - Interrupt flags are not cleared correctly, which can cause re-entry or interrupt storms.
+          - DMA buffers are used without cache maintenance or alignment where the target requires it.
+          Pass if no such issues are found or the change does not touch interrupt, DMA, or RTOS code.
+
+      # 6
+      - name: "Hardware access, timeouts and error handling"
+        mode: error
+        instructions: |
+          For changed driver, BSP, middleware, and example code, fail if:
+          - A loop polls a hardware flag or status register without a timeout or escape condition (an infinite wait can hang the device in the field).
+          - The return value of a HAL/LL/BSP/middleware call (HAL_StatusTypeDef or equivalent) is ignored where a failure would leave the peripheral or system in an inconsistent state.
+          - Register values are written as magic numbers instead of the CMSIS/HAL bit-definition macros, or bits are written in reserved register fields.
+          - Peripheral clock enable, GPIO alternate function, or NVIC setup is missing or wrong for the peripheral being used, or is inconsistent with the device reference manual.
+          - Error paths do not de-initialize or release resources (peripheral state, locks, HAL handle State/ErrorCode) acquired earlier in the function.
+          - Flash or option-byte programming is done without unlocking, waiting for completion, checking errors, and re-locking.
+          Pass only if none of the above are found.
+
+      # 7
+      - name: "API compatibility and release traceability"
+        mode: warning
+        instructions: |
+          For changed public headers and APIs (HAL, LL, BSP, middleware):
+          - Warn if a public function signature, structure layout, enum value, or macro is removed or changed in a way that breaks existing customer code, unless the PR description explicitly documents the breaking change and a migration path.
+          - Warn if driver or middleware version macros (e.g. __STM32F4xx_HAL_VERSION_MAIN/SUB1/SUB2/RC) or Release_Notes.html are not updated when behavior of a released component changes.
+          - Warn if a functional change to a driver has no corresponding update to the affected examples in Projects/ that use it.
+          - Warn if a submodule pointer bump is not described in the PR description (which component, from which version to which version).
+          Pass if the change keeps the public API backward compatible and is traceable to a version or release note.
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CONTRIBUTING.md"
+      - "SECURITY.md"
+  learnings:
+    scope: auto
+  pull_requests:
+    scope: auto
