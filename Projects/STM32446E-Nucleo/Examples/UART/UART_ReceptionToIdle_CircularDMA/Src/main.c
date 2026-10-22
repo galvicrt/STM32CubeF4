@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "cmd_shell.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -121,6 +121,9 @@ int main(void)
 
   /* Initiate Continuous reception */
   StartReception();
+
+  /* Start the UART command shell */
+  CmdShell_Init(&huart2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -332,6 +335,8 @@ void UserDataTreatment(UART_HandleTypeDef *huart, uint8_t* pData, uint16_t Size)
     pBuff++;
   }
 
+  /* Forward received characters to the command shell */
+  CmdShell_ProcessBytes(pData, Size);
 }
 
 /**
